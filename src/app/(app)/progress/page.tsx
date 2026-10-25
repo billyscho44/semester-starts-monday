@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { addDays, dayIndex, shortLabel, todayIso } from "@/lib/dates";
 import { loadAllPlanDays, type PlanDay } from "@/lib/plan";
-import { BarChart, LineChart, StackedBars, type Bar, type Pt, type Stack } from "@/components/charts";
+import { BarChart, LineChart, Spark, StackedBars, type Bar, type Pt, type Stack } from "@/components/charts";
 
 export const dynamic = "force-dynamic";
 
@@ -97,22 +97,13 @@ export default async function ProgressPage() {
     value: sessions.filter((s) => ACTIVE.has(s.status) && weekOf(s.date) === i + 1).reduce((t, s) => t + minutesFor(s), 0),
   }));
 
-  // Strength sets and volume
+  // Strength sets
   const sessDate = new Map(sessions.map((s) => [s.id, s.date]));
   const setRows = checks.filter((c) => c.kind === "set");
   const setsWeekly: Bar[] = weekLabels.map((label, i) => ({
     label,
     value: setRows.filter((c) => weekOf(sessDate.get(c.session_id) ?? start) === i + 1).length,
   }));
-  const volumeWeekly: Bar[] = weekLabels.map((label, i) => ({
-    label,
-    value: Math.round(
-      setRows
-        .filter((c) => weekOf(sessDate.get(c.session_id) ?? start) === i + 1 && c.reps && c.load_lb)
-        .reduce((t, c) => t + (c.reps as number) * Number(c.load_lb), 0),
-    ),
-  }));
-
   // Effort mix
   const effort: Stack[] = weekLabels.map((label, i) => {
     const rs = results.filter((r) => weekOf(sessDate.get(r.session_id) ?? start) === i + 1);
@@ -138,10 +129,24 @@ export default async function ProgressPage() {
     best.set(name, per);
   }
   const fmtTop = (t: Top, unit: string) => (t.load ? `${t.load} lb × ${t.reps}` : `${t.reps}${unit}`);
+  const better = (a: Top, b: Top) => a.load > b.load || (a.load === b.load && a.reps > b.reps);
+  const improvements: Bar[] = weekLabels.map((label) => ({ label, value: 0 }));
   const exerciseRows = [...best.entries()].map(([name, per]) => {
     const list = [...per.values()].sort((a, b) => a.date.localeCompare(b.date));
     const unit = /plank|carry/i.test(name) ? " s" : " reps";
-    return { name, n: list.length, first: fmtTop(list[0], unit), latest: fmtTop(list[list.length - 1], unit) };
+    let run = list[0];
+    for (const t of list.slice(1)) {
+      if (better(t, run)) {
+        run = t;
+        const w = weekOf(t.date) - 1;
+        if (improvements[w]) improvements[w].value += 1;
+      }
+    }
+    const score = (t: Top) => (t.load ? Math.round(t.load * (1 + t.reps / 30) * 10) / 10 : t.reps);
+    return {
+      name, n: list.length, first: fmtTop(list[0], unit), latest: fmtTop(list[list.length - 1], unit),
+      up: better(list[list.length - 1], list[0]), trend: list.map(score),
+    };
   });
 
   // Weight
@@ -183,11 +188,11 @@ export default async function ProgressPage() {
       <Card title="Active minutes per week" sub="Minutes of the checked-off steps and sets, not the planned total.">
         <BarChart data={minutes} unit="min" title="Active minutes per week" />
       </Card>
-      <Card title="Strength sets completed" sub="Every set you checked off, per week.">
+      <Card title="Strength sets completed" sub="Every set you checked off, per week, loaded or bodyweight.">
         <BarChart data={setsWeekly} unit="sets" title="Strength sets completed per week" />
       </Card>
-      <Card title="Strength volume (lb)" sub="Reps × load, summed over sets that have a load. Bodyweight sets are not counted.">
-        <BarChart data={volumeWeekly} unit="lb" title="Strength volume per week" />
+      <Card title="Strength improvements" sub="Exercises where your best set beat every earlier session: more weight, more reps at the same weight, or a longer hold. Adding load to a bodyweight move counts.">
+        <BarChart data={improvements} unit="improvements" title="Strength improvements per week" />
       </Card>
       <Card title="Effort mix" sub="How you rated each exercise. As easy ratings pile up, the app proposes more (step 4).">
         <StackedBars data={effort} title="Exercise effort ratings per week" />
@@ -201,14 +206,14 @@ export default async function ProgressPage() {
         )}
       </Card>
 
-      <Card title="Lifts: first vs latest best set" sub="Your heaviest set, first session versus the most recent.">
+      <Card title="Lifts: first vs latest best set" sub="Heaviest set per session (reps if no weight, seconds for holds). The line shows each session's best set.">
         {exerciseRows.length === 0 ? (
           <p className="text-sm text-muted">Log sets to see lift progress.</p>
         ) : (
           <table className="w-full text-sm">
             <thead>
               <tr className="text-left text-xs text-muted">
-                <th className="py-1 font-medium">Exercise</th><th className="font-medium">First</th><th className="font-medium">Latest</th>
+                <th className="py-1 font-medium">Exercise</th><th className="font-medium">First</th><th className="font-medium">Latest</th><th className="font-medium"><span className="sr-only">Trend</span></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-line">
@@ -216,7 +221,8 @@ export default async function ProgressPage() {
                 <tr key={r.name}>
                   <td className="py-2 pr-2 leading-snug">{r.name.replace(/,.*$/, "")}</td>
                   <td className="pr-2 text-muted">{r.first}</td>
-                  <td>{r.n > 1 ? r.latest : "·"}</td>
+                  <td className="pr-2">{r.n > 1 ? r.latest : "·"}{r.n > 1 && r.up ? " ↑" : ""}</td>
+                  <td><Spark values={r.trend} /></td>
                 </tr>
               ))}
             </tbody>

@@ -154,3 +154,18 @@ export function LineChart({
     </figure>
   );
 }
+
+export function Spark({ values }: { values: number[] }) {
+  if (values.length < 2) return <span className="text-muted">·</span>;
+  const lo = Math.min(...values);
+  const hi = Math.max(...values);
+  const span = hi - lo || 1;
+  const w = 56;
+  const h = 20;
+  const pts = values.map((v, i) => `${((i / (values.length - 1)) * (w - 4) + 2).toFixed(1)},${(h - 3 - ((v - lo) / span) * (h - 6)).toFixed(1)}`);
+  return (
+    <svg width={w} height={h} role="img" aria-label={`Trend: ${values.join(", ")}`}>
+      <polyline points={pts.join(" ")} fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+    </svg>
+  );
+}
