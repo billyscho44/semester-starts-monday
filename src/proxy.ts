@@ -61,6 +61,6 @@ export const config = {
   matcher: [
     // Skip static files, icons, the manifest and the Strava webhook
     // (the webhook must be reachable without a login; it verifies itself).
-    "/((?!_next/static|_next/image|favicon.ico|icon-.*\\.png|apple-touch-icon.png|manifest.webmanifest|sw.js|api/webhooks).*)",
+    "/((?!_next/static|_next/image|favicon.ico|icon-.*\\.png|apple-touch-icon.png|manifest.webmanifest|sw.js|exercises/|api/webhooks).*)",
   ],
 };

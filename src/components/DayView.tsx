@@ -3,6 +3,8 @@
 import { useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { PlanDay, PlanItem, SessionRow } from "@/lib/plan";
+import { guidesForStep } from "@/lib/exercise-guide";
+import GuideButton from "./GuideButton";
 
 export type CheckRow = {
   kind: "step" | "set";
@@ -235,7 +237,7 @@ export default function DayView(props: {
                       <li key={it.id}>
                         <div className="flex items-baseline justify-between gap-2">
                           <p className="text-sm">
-                            <span className="font-medium">{it.exercise?.name}</span>
+                            <GuideButton name={it.exercise?.name ?? ""} className="font-medium" />
                             <span className="text-muted"> · {planText(it)}{it.load_text ? ` · ${it.load_text}` : ""}</span>
                           </p>
                         </div>
@@ -316,6 +318,13 @@ export default function DayView(props: {
                     {s.label} <span className="font-normal text-muted">· {s.min} min</span>
                   </p>
                   {s.note && <p className="mt-0.5 text-sm leading-snug text-muted">{s.note}</p>}
+                  {guidesForStep(s.label, s.note).length > 0 && (
+                    <p className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-sm">
+                      {guidesForStep(s.label, s.note).map((g) => (
+                        <GuideButton key={g} name={g} className="min-h-8 text-accent" />
+                      ))}
+                    </p>
+                  )}
                 </div>
               </li>
             );
