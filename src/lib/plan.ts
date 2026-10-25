@@ -15,6 +15,9 @@ export type PlanItem = {
   hold_max_s: number | null;
   per_side: boolean;
   load_text: string;
+  target_reps: number | null;
+  target_load_lb: number | null;
+  target_hold_s: number | null;
   exercise: { name: string; bw_factor: number | null } | null;
 };
 
@@ -40,7 +43,7 @@ export type SessionRow = {
 
 export const PLAN_SELECT =
   "id,week_no,day_no,session_kind,title,minutes_est,steps," +
-  "plan_item(id,round_no,ord,sets,rep_min,rep_max,hold_min_s,hold_max_s,per_side,load_text,exercise:exercise_id(name,bw_factor))";
+  "plan_item(id,round_no,ord,sets,rep_min,rep_max,hold_min_s,hold_max_s,per_side,load_text,target_reps,target_load_lb,target_hold_s,exercise:exercise_id(name,bw_factor))";
 
 export const PLAN_DAYS = 28;
 

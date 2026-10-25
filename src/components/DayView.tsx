@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import type { PlanDay, PlanItem, SessionRow } from "@/lib/plan";
 import { guidesForStep } from "@/lib/exercise-guide";
@@ -29,9 +30,11 @@ type Local = { done: boolean; reps: string; load: string };
 const key = (kind: string, ref: string, n: number) => `${kind}:${ref}:${n}`;
 
 function defaultReps(i: PlanItem): number {
-  return (i.hold_min_s != null ? i.hold_max_s ?? i.hold_min_s : i.rep_max ?? i.rep_min) ?? 0;
+  if (i.hold_min_s != null) return i.target_hold_s ?? i.hold_max_s ?? i.hold_min_s;
+  return i.target_reps ?? i.rep_max ?? i.rep_min ?? 0;
 }
 function defaultLoad(i: PlanItem): string {
+  if (i.target_load_lb != null) return String(i.target_load_lb);
   const m = i.load_text.match(/(\d+(?:\.\d+)?)\s*lb/);
   return m ? m[1] : "";
 }
@@ -42,7 +45,7 @@ function planText(i: PlanItem): string {
     return `${i.sets} × ${h} s${side}`;
   }
   const r = i.rep_max && i.rep_max !== i.rep_min ? `${i.rep_min} to ${i.rep_max}` : `${i.rep_min}`;
-  return `${i.sets} × ${r}${side}`;
+  return `${i.sets} × ${r}${side}${i.target_reps ? ` · target ${i.target_reps}` : ""}`;
 }
 
 const STATUS_LABEL: Record<string, string> = {
@@ -83,6 +86,7 @@ export default function DayView(props: {
 }) {
   const { userId, date, editable, day } = props;
   const supabase = useRef(createClient()).current;
+  const router = useRouter();
   const sessionId = useRef<string | null>(props.session?.id ?? null);
 
   const [local, setLocal] = useState<Record<string, Local>>(() => {
@@ -184,7 +188,14 @@ export default function DayView(props: {
     );
     if (error) { setErr(error.message); return; }
     const next = fb.completion === "yes" ? "done" : "partial";
-    if (await setSessionStatus(next, { zwift_workout: zwift || null, miss_reason: null })) setMsg("Saved.");
+    if (await setSessionStatus(next, { zwift_workout: zwift || null, miss_reason: null })) {
+      setMsg("Saved.");
+      const r = await fetch("/api/progression", {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionId: sid }),
+      });
+      if (!r.ok) setErr("Saved, but the next-time proposals failed. Save again to retry.");
+      router.refresh();
+    }
   }
 
   async function minimumDay() {

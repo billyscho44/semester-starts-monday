@@ -5,6 +5,7 @@ import { PLAN_SELECT, type PlanDay, type SessionRow } from "@/lib/plan";
 import { addDays, longLabel, planPosition, todayIso } from "@/lib/dates";
 import DayView, { type CheckRow, type FeedbackRow, type ResultRow } from "./DayView";
 import WeightCard from "./WeightCard";
+import Proposals, { type ProposalRow } from "./Proposals";
 
 export default async function DayPage({ date }: { date: string }) {
   const supabase = await createClient();
@@ -24,6 +25,7 @@ export default async function DayPage({ date }: { date: string }) {
   let weight: number | null = null;
   let lastWeight: { date: string; lb: number } | null = null;
   let note: string | null = null;
+  let proposals: ProposalRow[] = [];
 
   try {
     await ensurePlan(supabase, user.id);
@@ -51,6 +53,18 @@ export default async function DayPage({ date }: { date: string }) {
       results = (r.data ?? []) as ResultRow[];
       feedback = (f.data as FeedbackRow) ?? null;
     }
+    const PSEL = "id,kind,summary,reason,status,new_target_reps,new_target_load_lb,session_id";
+    const [pend, mine] = await Promise.all([
+      isToday
+        ? supabase.from("proposal").select(PSEL).eq("status", "pending").order("created_at")
+        : Promise.resolve({ data: [] }),
+      session ? supabase.from("proposal").select(PSEL).eq("session_id", session.id).order("created_at") : Promise.resolve({ data: [] }),
+    ]);
+    const seen = new Set<string>();
+    proposals = [...(mine.data ?? []), ...(pend.data ?? [])].filter((p) => {
+      const id = (p as { id: string }).id;
+      return seen.has(id) ? false : (seen.add(id), true);
+    }) as unknown as ProposalRow[];
     if (isToday) {
       const { data: w } = await supabase
         .from("weight_log").select("date,weight_lb").order("date", { ascending: false }).limit(2);
@@ -84,6 +98,8 @@ export default async function DayPage({ date }: { date: string }) {
           <p className="text-sm text-muted">{note}</p>
         </section>
       )}
+
+      {!error && !note && proposals.length > 0 && <Proposals rows={proposals} title="Next time" />}
 
       {!error && !note && (
         <DayView
