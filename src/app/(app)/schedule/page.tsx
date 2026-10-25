@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { ensurePlan } from "@/lib/seed-plan";
 import { loadAllPlanDays } from "@/lib/plan";
 import { addDays, shortLabel, todayIso } from "@/lib/dates";
+import { activeFromLogs, loadActivityDays } from "@/lib/activity";
 
 export const dynamic = "force-dynamic";
 
@@ -17,9 +18,10 @@ export default async function SchedulePage() {
   await ensurePlan(supabase, user.id);
   const { data: settings } = await supabase.from("settings").select("plan_start_date").maybeSingle();
   const start = (settings?.plan_start_date as string) ?? todayIso();
-  const [days, sessions] = await Promise.all([
+  const [days, sessions, logs] = await Promise.all([
     loadAllPlanDays(supabase),
     supabase.from("session").select("date,status").gte("date", start).lte("date", addDays(start, 27)),
+    loadActivityDays(supabase),
   ]);
   const status = new Map((sessions.data ?? []).map((s) => [s.date as string, s.status as string]));
   const today = todayIso();
@@ -47,8 +49,10 @@ export default async function SchedulePage() {
                       </span>
                       <span className="block truncate text-sm">{d.title.replace(" (deload)", "")}</span>
                     </span>
-                    {st && st !== "planned" ? (
+                    {st && st !== "planned" && !(st === "skipped" && activeFromLogs(date, logs.manual, logs.strava)) ? (
                       <span className="shrink-0 rounded-full border border-accent px-2 py-0.5 text-xs text-accent">{BADGE[st]}</span>
+                    ) : activeFromLogs(date, logs.manual, logs.strava) ? (
+                      <span className="shrink-0 rounded-full border border-accent px-2 py-0.5 text-xs text-accent">Swapped</span>
                     ) : date < today ? (
                       <span className="shrink-0 text-xs text-muted">Open</span>
                     ) : null}

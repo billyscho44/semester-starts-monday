@@ -17,7 +17,7 @@ Personal accountability PWA for Billy's iPhone. Plan started Sun Oct 25, 2026 (4
 - Code: https://github.com/billyscho44/semester-starts-monday (branches `main`, `dev`)
 - Live app: https://semester-starts-monday.vercel.app
 - Vercel: project prj_xhVVnzY9nXvK2YNV2SSscTov6TCT, team team_iZRYXBFrgxvpGacZLENAtLcJ (Hobby plan). Vercel MCP cannot list env vars (403).
-- Supabase project: maubxrmvqsxeixwubsnu (Postgres, RLS on, own-row policies). Migrations in `supabase/migrations/` 0001 to 0007, all applied.
+- Supabase project: maubxrmvqsxeixwubsnu (Postgres, RLS on, own-row policies). Migrations in `supabase/migrations/` 0001 to 0008, all applied (0008 = activity_log, activity_set).
 - Env vars (set in Vercel by Billy): Supabase URL and keys, SUPABASE_SERVICE_ROLE_KEY, STRAVA client id and secret, STRAVA_VERIFY_TOKEN, optional APP_URL.
 - Spec doc: https://claude.ai/artifact/A8WQC1iFVV5aSB8bsEFyoV (Claude Docs id 49ee9296-f621-4aa9-bd66-6f446c31d1a8). Behind the code: does not yet cover the progression engine, effective-load KPIs, exercise guides, or Strava specifics. This file is the more current source.
 - Strava app: Billy created it with an orange bike-wheel icon. Webhook callback: `/api/webhooks/strava`.
@@ -35,6 +35,15 @@ Next.js 16 (App Router, Turbopack, `src/proxy.ts` instead of middleware, `PagePr
 - Exercise how-to popups use free photos (yuhonas/free-exercise-db, Unlicense) in `public/exercises/`, with written cues in `src/lib/exercise-guide.ts`. Some moves have no photo (single-leg RDL, bird dog, figure-4, thoracic extension). Chair squat uses the bodyweight squat photos.
 - Strava: OAuth scope activity:read_all; tokens in `strava_link` (RLS on, no policies, service role only). Webhook answers within 2 s and processes in `after()`. Rides match the day's cardio/recovery plan_day, set session status (rank planned/skipped < minimum < partial < done) and auto-check ride steps.
 - Feedback loop: Billy's own feedback per session (session_feedback), the app's feedback, and periodic reports.
+
+## Off-plan activity logging (built Oct 25, on `dev`, awaiting Billy's test)
+- "Other activity" card on every day (Today and past days): Log an activity with type Walk, Run, Ride, Strength, Other. Cardio entries need minutes (distance optional). Strength entries are one exercise per entry with sets of reps (or seconds) and optional added weight; the bodyweight factor is snapshotted per set (`activity_set.bw_factor`).
+- Extra exercises auto-added per user by `ensureExtraExercises` (src/lib/activity.ts): Push-up 0.69, Knee push-up 0.54, Sit-up, Plank (seconds).
+- Counts as an active day (streak, active days per week): any entry with sets, any manual cardio of 10+ minutes, or any Strava activity of 10+ minutes. Active minutes add manual minutes and unmatched Strava minutes (matched rides are already counted through the plan's checked steps).
+- Manual strength sets feed strength sets, effective-volume and the Lifts table (merged by exercise name with plan sets). They do NOT feed the progression engine.
+- Plan day badge shows "Swapped" when the plan is planned or skipped but something else was logged (Today, Schedule). History lists activity-only days.
+- ActivityCard shows Strava's Relative Effort (`raw->>suffer_score`).
+- Not built: editing an entry (delete and re-add), manual walk/run duplicate detection against Strava (Billy logs by hand only what Strava lacks).
 
 ## Verified working (Oct 25, 2026)
 - Login, Today, check-offs, set logging, ratings, feedback form with injury note, weight entry (204 lb saved), Schedule, History, Progress.

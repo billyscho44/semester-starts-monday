@@ -10,6 +10,7 @@ export type Activity = {
   device_watts: boolean | null;
   zone_seconds: number[] | null;
   perceived_exertion: number | null;
+  suffer_score?: string | null;
 };
 
 const ZONES = ["Z1", "Z2", "Z3", "Z4", "Z5"];
@@ -31,6 +32,7 @@ export default function ActivityCard({ a }: { a: Activity }) {
           a.avg_hr && `avg HR ${Math.round(a.avg_hr)}`,
           a.max_hr && `max ${Math.round(a.max_hr)}`,
           a.avg_watts && `${Math.round(a.avg_watts)} W${a.device_watts ? "" : " (estimated)"}`,
+          a.suffer_score && `Relative Effort ${a.suffer_score}`,
           a.perceived_exertion != null && `effort ${a.perceived_exertion}/10`,
         ].filter(Boolean).join(" · ")}
       </p>

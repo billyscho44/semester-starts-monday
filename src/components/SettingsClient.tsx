@@ -32,7 +32,15 @@ export default function SettingsClient(props: {
       setLive(r.ok ? Boolean(j.active) : null);
     } catch { setLive(null); }
   }
-  useEffect(() => { if (props.stravaConnected) void checkLive(); }, [props.stravaConnected]);
+  useEffect(() => {
+    if (!props.stravaConnected) return;
+    let cancelled = false;
+    fetch("/api/strava/subscribe", { cache: "no-store" })
+      .then((r) => r.json().then((j) => (r.ok ? Boolean(j.active) : null)))
+      .then((v) => { if (!cancelled) setLive(v); })
+      .catch(() => { if (!cancelled) setLive(null); });
+    return () => { cancelled = true; };
+  }, [props.stravaConnected]);
 
   async function turnOnLive() {
     setBusy(true); setErr(null); setMsg(null);

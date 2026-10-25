@@ -83,6 +83,7 @@ export default function DayView(props: {
   checks: CheckRow[];
   results: ResultRow[];
   feedback: FeedbackRow | null;
+  swapped?: boolean;
 }) {
   const { userId, date, editable, day } = props;
   const supabase = useRef(createClient()).current;
@@ -233,7 +234,7 @@ export default function DayView(props: {
               status === "planned" ? "border-line text-muted" : "border-accent text-accent"
             }`}
           >
-            {STATUS_LABEL[status]}
+            {(status === "planned" || status === "skipped") && props.swapped ? "Swapped" : STATUS_LABEL[status]}
           </span>
         </div>
 

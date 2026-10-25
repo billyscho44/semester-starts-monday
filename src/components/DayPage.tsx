@@ -7,6 +7,8 @@ import DayView, { type CheckRow, type FeedbackRow, type ResultRow } from "./DayV
 import WeightCard from "./WeightCard";
 import Proposals, { type ProposalRow } from "./Proposals";
 import ActivityCard, { type Activity } from "./ActivityCard";
+import ActivityLogger, { type ExerciseOption } from "./ActivityLogger";
+import { ensureExtraExercises, type LoggedActivity } from "@/lib/activity";
 
 export default async function DayPage({ date }: { date: string }) {
   const supabase = await createClient();
@@ -28,9 +30,12 @@ export default async function DayPage({ date }: { date: string }) {
   let note: string | null = null;
   let proposals: ProposalRow[] = [];
   let activities: Activity[] = [];
+  let entries: LoggedActivity[] = [];
+  let exerciseOptions: ExerciseOption[] = [];
 
   try {
     await ensurePlan(supabase, user.id);
+    await ensureExtraExercises(supabase, user.id);
     const { data: settings } = await supabase.from("settings").select("plan_start_date").maybeSingle();
     const start = settings?.plan_start_date as string | undefined;
     if (!start) throw new Error("No settings row found for this account.");
@@ -57,9 +62,23 @@ export default async function DayPage({ date }: { date: string }) {
     }
     const { data: acts } = await supabase
       .from("strava_activity")
-      .select("id,name,sport_type,moving_s,distance_m,avg_hr,max_hr,avg_watts,device_watts,zone_seconds,perceived_exertion")
+      .select("id,name,sport_type,moving_s,distance_m,avg_hr,max_hr,avg_watts,device_watts,zone_seconds,perceived_exertion,suffer_score:raw->>suffer_score")
       .eq("local_date", date).order("started_at");
     activities = (acts ?? []) as unknown as Activity[];
+    const [logR, exR] = await Promise.all([
+      supabase
+        .from("activity_log")
+        .select("id,date,kind,label,minutes,distance_mi,note,exercise:exercise_id(id,name,unit,bw_factor),activity_set(set_no,reps,load_lb)")
+        .eq("date", date).order("created_at"),
+      supabase.from("exercise").select("id,name,unit,bw_factor").eq("type", "strength").order("name"),
+    ]);
+    entries = ((logR.data ?? []) as unknown as (Omit<LoggedActivity, "sets"> & { activity_set: { set_no: number; reps: number; load_lb: number | null }[] })[]).map((r) => ({
+      id: r.id, date: r.date, kind: r.kind, label: r.label,
+      minutes: r.minutes, distance_mi: r.distance_mi != null ? Number(r.distance_mi) : null, note: r.note,
+      exercise: r.exercise ? { ...r.exercise, bw_factor: r.exercise.bw_factor != null ? Number(r.exercise.bw_factor) : null } : null,
+      sets: [...(r.activity_set ?? [])].sort((a, b) => a.set_no - b.set_no).map((x) => ({ set_no: x.set_no, reps: x.reps, load_lb: x.load_lb != null ? Number(x.load_lb) : null })),
+    }));
+    exerciseOptions = ((exR.data ?? []) as unknown as ExerciseOption[]).map((e) => ({ ...e, bw_factor: e.bw_factor != null ? Number(e.bw_factor) : null }));
     const PSEL = "id,kind,summary,reason,status,new_target_reps,new_target_load_lb,session_id";
     const [pend, mine] = await Promise.all([
       isToday
@@ -121,7 +140,12 @@ export default async function DayPage({ date }: { date: string }) {
           checks={checks}
           results={results}
           feedback={feedback}
+          swapped={entries.length > 0 || activities.some((a) => (a.moving_s ?? 0) >= 600)}
         />
+      )}
+
+      {!error && !note && (
+        <ActivityLogger userId={user.id} date={date} editable={date <= today} exercises={exerciseOptions} entries={entries} />
       )}
 
       {isToday && !error && <WeightCard userId={user.id} date={date} initial={weight} last={lastWeight} />}
