@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
@@ -23,6 +23,29 @@ export default function SettingsClient(props: {
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [live, setLive] = useState<boolean | null>(null);
+
+  async function checkLive() {
+    try {
+      const r = await fetch("/api/strava/subscribe", { cache: "no-store" });
+      const j = await r.json();
+      setLive(r.ok ? Boolean(j.active) : null);
+    } catch { setLive(null); }
+  }
+  useEffect(() => { if (props.stravaConnected) void checkLive(); }, [props.stravaConnected]);
+
+  async function turnOnLive() {
+    setBusy(true); setErr(null); setMsg(null);
+    try {
+      const r = await fetch("/api/strava/subscribe", { method: "POST" });
+      const j = await r.json();
+      const text = JSON.stringify(j);
+      if (r.ok || /already exists/i.test(text)) setMsg("Live updates are on. New rides appear within a minute.");
+      else setErr(`Strava said: ${text}`);
+    } catch { setErr("Request failed."); }
+    await checkLive();
+    setBusy(false);
+  }
 
   async function saveHr() {
     const m = Number(maxHr), r = Number(restHr);
@@ -75,7 +98,7 @@ export default function SettingsClient(props: {
         <div className="mt-3 flex flex-wrap gap-2">
           <a href="/api/strava/connect" className={`${btn} flex items-center`}>{props.stravaConnected ? "Reconnect" : "Connect Strava"}</a>
           <button disabled={busy || !props.stravaConnected} onClick={() => call("/api/strava/sync", "POST", (j) => `Synced ${j.synced} activities.`)} className={btn}>Sync now</button>
-          <button disabled={busy || !props.stravaConnected} onClick={() => call("/api/strava/subscribe", "POST", () => "Live updates are on. New rides appear within a minute.")} className={btn}>Turn on live updates</button>
+          <button disabled={busy || !props.stravaConnected || live === true} onClick={turnOnLive} className={btn}>{live === true ? "Live updates: on" : "Turn on live updates"}</button>
         </div>
         <p className="mt-2 text-xs text-muted">Live updates make rides appear on their own. If they are already on, Strava may answer that the subscription exists; that is fine.</p>
       </section>
