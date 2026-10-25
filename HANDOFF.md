@@ -17,7 +17,7 @@ Personal accountability PWA for Billy's iPhone. Plan started Sun Oct 25, 2026 (4
 - Code: https://github.com/billyscho44/semester-starts-monday (branches `main`, `dev`)
 - Live app: https://semester-starts-monday.vercel.app
 - Vercel: project prj_xhVVnzY9nXvK2YNV2SSscTov6TCT, team team_iZRYXBFrgxvpGacZLENAtLcJ (Hobby plan). Vercel MCP cannot list env vars (403).
-- Supabase project: maubxrmvqsxeixwubsnu (Postgres, RLS on, own-row policies). Migrations in `supabase/migrations/` 0001 to 0008, all applied (0008 = activity_log, activity_set).
+- Supabase project: maubxrmvqsxeixwubsnu (Postgres, RLS on, own-row policies). Migrations in `supabase/migrations/` 0001 to 0009, all applied (0008 = activity_log, activity_set; 0009 = effort on activities, credit_override, performed_set view).
 - Env vars (set in Vercel by Billy): Supabase URL and keys, SUPABASE_SERVICE_ROLE_KEY, STRAVA client id and secret, STRAVA_VERIFY_TOKEN, optional APP_URL.
 - Spec doc: https://claude.ai/artifact/A8WQC1iFVV5aSB8bsEFyoV (Claude Docs id 49ee9296-f621-4aa9-bd66-6f446c31d1a8). Behind the code: does not yet cover the progression engine, effective-load KPIs, exercise guides, or Strava specifics. This file is the more current source.
 - Strava app: Billy created it with an orange bike-wheel icon. Webhook callback: `/api/webhooks/strava`.
@@ -46,6 +46,16 @@ Next.js 16 (App Router, Turbopack, `src/proxy.ts` instead of middleware, `PagePr
 - Billy records rides, walks and runs on his Watch and imports them into Strava afterward; the Strava app is used live only for the indoor bike. Imported activities carry their original date.
 - ActivityCard shows Strava's Relative Effort (`raw->>suffer_score`).
 - Not built: editing an entry (delete and re-add), manual walk/run duplicate detection against Strava (Billy logs by hand only what Strava lacks).
+
+## Flexible plan: slots, not days (built Oct 25, on `dev`, awaiting Billy's test)
+Principle (Billy's): the log is the truth, the plan is a menu. "You are what you measure": anything as hard or harder than the plan must count as part of the plan, not an outlier.
+- `src/lib/slots.ts` is a pure function (`computeSlots`) tested by a scratch script (16 cases passed). Each plan week has 7 slots (3 cardio, 3 strength, 1 recovery). Slots are filled by (1) planned sessions with status done/partial/minimum, then (2) work logged outside the plan, oldest day first: strength sets (>= 80% of the slot's planned sets = full, >= 40% = partial) and cardio minutes (>= 80% of planned cardio minutes = full, >= 15 min = partial), into the day's own slot if open else the earliest open slot of that kind that week; extra cardio fills the recovery slot when cardio slots are full. Nothing is stored; credit is recomputed on every load.
+- Override: `credit_override` (per date and kind) lets Billy point a day's work at a chosen slot or at nothing ("Nothing in the plan"). UI: CreditControl inside the Week card on each day page.
+- "Today's session" picker (SessionSwap): switch the day to another open session of this week before anything is checked off; sets `session.plan_day_id`. Strava rides match the switched session (strava.ts).
+- WeekSlots card on every day page; Schedule shows per-week slot counts and "Done Tue" badges when a slot was filled on another day; Progress has "Plan slots filled per week".
+- Logger: effort rating (easy/average/hard) on every entry, "Add a new exercise" on the fly (reps or seconds, movement type), "Save and add another exercise" for gym workouts.
+- `performed_set` view (security_invoker) unions plan sets and logged sets, for coach read-throughs and future progression.
+- NOT built yet (next): the progression engine still learns only from planned sets (logged sets have effort but do not create proposals); generating Block 2 from what was actually done; showing recent off-plan volume on plan exercises; cardio credit by intensity (zones/Relative Effort) instead of minutes only.
 
 ## Verified working (Oct 25, 2026)
 - Login, Today, check-offs, set logging, ratings, feedback form with injury note, weight entry (204 lb saved), Schedule, History, Progress.

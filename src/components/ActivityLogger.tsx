@@ -8,17 +8,20 @@ import { KIND_LABEL, type ActivityKind, type LoggedActivity } from "@/lib/activi
 export type ExerciseOption = { id: string; name: string; unit: "reps" | "seconds" | "minutes"; bw_factor: number | null };
 
 type SetRow = { reps: string; load: string };
+type Effort = "easy" | "average" | "hard";
 
 const KINDS: ActivityKind[] = ["walk", "run", "ride", "strength", "other"];
 const QUICK = ["Push-up", "Sit-up", "Plank", "Chair squat"];
+const PATTERNS = ["squat", "hinge", "lunge", "horizontal push", "horizontal pull", "vertical push", "vertical pull", "core", "carry", "other"];
 
 function summary(a: LoggedActivity): string {
+  const effort = a.effort ? ` · ${a.effort}` : "";
   if (a.kind === "strength") {
     const unit = a.exercise?.unit === "seconds" ? " s" : "";
     const sets = a.sets.map((s) => `${s.reps}${unit}${s.load_lb ? ` @ ${s.load_lb} lb` : ""}`).join(", ");
-    return `${a.sets.length} set${a.sets.length === 1 ? "" : "s"}: ${sets}`;
+    return `${a.sets.length} set${a.sets.length === 1 ? "" : "s"}: ${sets}${effort}`;
   }
-  return [a.minutes != null && `${a.minutes} min`, a.distance_mi != null && `${a.distance_mi} mi`].filter(Boolean).join(" · ");
+  return [a.minutes != null && `${a.minutes} min`, a.distance_mi != null && `${a.distance_mi} mi`].filter(Boolean).join(" · ") + effort;
 }
 
 export default function ActivityLogger(props: {
@@ -28,27 +31,34 @@ export default function ActivityLogger(props: {
   exercises: ExerciseOption[];
   entries: LoggedActivity[];
 }) {
-  const { userId, date, editable, exercises, entries } = props;
+  const { userId, date, editable, entries } = props;
   const supabase = useRef(createClient()).current;
   const router = useRouter();
 
+  const [exercises, setExercises] = useState<ExerciseOption[]>(props.exercises);
   const [open, setOpen] = useState(false);
   const [kind, setKind] = useState<ActivityKind>("walk");
   const [label, setLabel] = useState("");
   const [minutes, setMinutes] = useState("");
   const [miles, setMiles] = useState("");
   const [note, setNote] = useState("");
-  const [exId, setExId] = useState<string>(() => exercises.find((e) => e.name === "Push-up")?.id ?? exercises[0]?.id ?? "");
+  const [effort, setEffort] = useState<Effort | null>(null);
+  const [exId, setExId] = useState<string>(() => props.exercises.find((e) => e.name === "Push-up")?.id ?? props.exercises[0]?.id ?? "");
   const [sets, setSets] = useState<SetRow[]>([{ reps: "", load: "" }]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
 
+  const [newOpen, setNewOpen] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newUnit, setNewUnit] = useState<"reps" | "seconds">("reps");
+  const [newPattern, setNewPattern] = useState("other");
+
   const ex = exercises.find((e) => e.id === exId) ?? null;
   const quick = QUICK.map((n) => exercises.find((e) => e.name === n)).filter((e): e is ExerciseOption => !!e);
 
-  function reset() {
-    setLabel(""); setMinutes(""); setMiles(""); setNote(""); setSets([{ reps: "", load: "" }]);
+  function resetEntry() {
+    setLabel(""); setMinutes(""); setMiles(""); setNote(""); setEffort(null); setSets([{ reps: "", load: "" }]);
   }
 
   function addSet() {
@@ -61,7 +71,27 @@ export default function ActivityLogger(props: {
     setSets((s) => (s.length > 1 ? s.filter((_, k) => k !== i) : s));
   }
 
-  async function save() {
+  async function createExercise() {
+    setErr(null);
+    const name = newName.trim();
+    if (name.length < 2) { setErr("Enter a name for the exercise."); return; }
+    if (exercises.some((e) => e.name.toLowerCase() === name.toLowerCase())) { setErr("That exercise already exists. Pick it from the list."); return; }
+    setBusy(true);
+    const { data, error } = await supabase
+      .from("exercise")
+      .insert({ user_id: userId, name, type: "strength", movement_pattern: newPattern, unit: newUnit })
+      .select("id,name,unit,bw_factor")
+      .single();
+    setBusy(false);
+    if (error || !data) { setErr(error?.message ?? "Could not add the exercise."); return; }
+    const opt: ExerciseOption = { id: data.id, name: data.name, unit: data.unit, bw_factor: null };
+    setExercises((l) => [...l, opt].sort((a, b) => a.name.localeCompare(b.name)));
+    setExId(opt.id);
+    setNewOpen(false); setNewName("");
+    setMsg(`Added "${name}". Set its body-weight factor on Progress if it uses your body weight.`);
+  }
+
+  async function save(addAnother: boolean) {
     setErr(null); setMsg(null);
     const isStrength = kind === "strength";
     const mins = minutes === "" ? null : Number(minutes);
@@ -70,7 +100,7 @@ export default function ActivityLogger(props: {
       if (kind === "other" && !label.trim()) { setErr("Enter what you did."); return; }
     }
     const rows = sets
-      .map((s, i) => ({ set_no: i + 1, reps: Number(s.reps), load_lb: s.load === "" ? null : Number(s.load) }))
+      .map((s) => ({ reps: Number(s.reps), load_lb: s.load === "" ? null : Number(s.load) }))
       .filter((s) => s.reps >= 1);
     if (isStrength) {
       if (!ex) { setErr("Pick an exercise."); return; }
@@ -80,7 +110,7 @@ export default function ActivityLogger(props: {
     const { data, error } = await supabase
       .from("activity_log")
       .insert({
-        user_id: userId, date, kind,
+        user_id: userId, date, kind, effort,
         label: kind === "other" ? label.trim() : null,
         exercise_id: isStrength ? ex!.id : null,
         minutes: isStrength ? null : mins,
@@ -102,9 +132,9 @@ export default function ActivityLogger(props: {
       }
     }
     setBusy(false);
-    setMsg("Logged.");
-    reset();
-    setOpen(false);
+    resetEntry();
+    if (addAnother && isStrength) setMsg("Saved. Pick the next exercise.");
+    else { setMsg("Logged."); setOpen(false); }
     router.refresh();
   }
 
@@ -116,11 +146,12 @@ export default function ActivityLogger(props: {
   }
 
   const field = "h-11 rounded-xl border border-line bg-bg px-3";
+  const seg = (on: boolean) => `min-h-11 flex-1 rounded-xl border px-2 text-sm ${on ? "border-accent bg-accent text-accent-ink" : "border-line bg-card text-ink"}`;
 
   return (
     <section className="mt-4 rounded-2xl border border-line bg-card p-5" aria-label="Other activity">
       <h2 className="text-base font-semibold">Other activity</h2>
-      <p className="mt-0.5 text-xs text-muted">Anything outside the plan counts toward your streak: a walk, a run, push-ups, sit-ups.</p>
+      <p className="mt-0.5 text-xs text-muted">Anything outside the plan counts: a gym workout, a walk, push-ups. Enough work fills an open slot in this week&apos;s plan.</p>
 
       {entries.length > 0 && (
         <ul className="mt-3 divide-y divide-line">
@@ -180,6 +211,28 @@ export default function ActivityLogger(props: {
                   {exercises.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
                 </select>
               </label>
+              {!newOpen ? (
+                <button type="button" onClick={() => setNewOpen(true)} className="min-h-11 text-sm text-accent underline underline-offset-4">
+                  Not in the list? Add a new exercise
+                </button>
+              ) : (
+                <div className="space-y-2 rounded-xl border border-line p-3">
+                  <input placeholder="Name (for example, Leg press machine)" value={newName} onChange={(e) => setNewName(e.target.value)} className={`${field} w-full`} />
+                  <div className="flex gap-2">
+                    <select aria-label="Counted in" value={newUnit} onChange={(e) => setNewUnit(e.target.value as "reps" | "seconds")} className={`${field} flex-1`}>
+                      <option value="reps">Counted in reps</option>
+                      <option value="seconds">Counted in seconds (holds)</option>
+                    </select>
+                    <select aria-label="Movement type" value={newPattern} onChange={(e) => setNewPattern(e.target.value)} className={`${field} flex-1`}>
+                      {PATTERNS.map((p) => <option key={p} value={p}>{p}</option>)}
+                    </select>
+                  </div>
+                  <div className="flex gap-2">
+                    <button type="button" onClick={createExercise} disabled={busy} className="min-h-11 flex-1 rounded-xl bg-accent px-3 text-sm font-medium text-accent-ink disabled:opacity-40">Add exercise</button>
+                    <button type="button" onClick={() => { setNewOpen(false); setErr(null); }} className="min-h-11 rounded-xl border border-line px-3 text-sm">Cancel</button>
+                  </div>
+                </div>
+              )}
               <ul className="space-y-1.5">
                 {sets.map((s, i) => (
                   <li key={i} className="flex items-center gap-2">
@@ -188,7 +241,7 @@ export default function ActivityLogger(props: {
                       value={s.reps} onChange={(e) => patchSet(i, { reps: e.target.value.replace(/\D/g, "") })}
                       className={`${field} w-16 text-center`} />
                     <span className="text-xs text-muted">{ex?.unit === "seconds" ? "s" : "reps"}</span>
-                    <input inputMode="decimal" aria-label={`Set ${i + 1} added weight in lb`} placeholder="lb"
+                    <input inputMode="decimal" aria-label={`Set ${i + 1} weight in lb`} placeholder="lb"
                       value={s.load} onChange={(e) => patchSet(i, { load: e.target.value.replace(/[^\d.]/g, "") })}
                       className={`${field} w-16 text-center`} />
                     <span className="text-xs text-muted">lb</span>
@@ -202,7 +255,7 @@ export default function ActivityLogger(props: {
                 Add set (copies the last one)
               </button>
               {ex && ex.bw_factor != null && (
-                <p className="text-xs text-muted">Counts about {Math.round(ex.bw_factor * 100)}% of your body weight per rep. Weight box is added weight only.</p>
+                <p className="text-xs text-muted">Counts about {Math.round(ex.bw_factor * 100)}% of your body weight per rep. The weight box is added weight only (machine or dumbbell).</p>
               )}
             </>
           ) : (
@@ -218,19 +271,36 @@ export default function ActivityLogger(props: {
                   onChange={(e) => setMiles(e.target.value.replace(/[^\d.]/g, ""))} className={`${field} w-24 text-center`} />
                 <span className="text-xs text-muted">mi (optional)</span>
               </div>
-              <p className="text-xs text-muted">Walks and runs recorded by your Watch arrive from Strava by themselves. Log by hand only what Strava will not have.</p>
+              <p className="text-xs text-muted">Rides, walks and runs you import into Strava arrive by themselves. Log by hand only what Strava will not have.</p>
             </>
           )}
 
+          <div className="space-y-1.5">
+            <p className="text-sm text-muted">How hard was it</p>
+            <div role="group" aria-label="Effort" className="flex gap-1.5">
+              {(["easy", "average", "hard"] as const).map((v) => (
+                <button key={v} type="button" aria-pressed={effort === v} onClick={() => setEffort(effort === v ? null : v)} className={seg(effort === v)}>
+                  {v === "easy" ? "Easy" : v === "average" ? "Average" : "Hard"}
+                </button>
+              ))}
+            </div>
+          </div>
+
           <textarea placeholder="Note (optional)" rows={2} value={note} onChange={(e) => setNote(e.target.value)}
             className="w-full rounded-xl border border-line bg-bg px-3 py-2" />
-          <div className="flex gap-2">
-            <button type="button" onClick={save} disabled={busy}
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={() => save(false)} disabled={busy}
               className="min-h-12 flex-1 rounded-xl bg-accent px-4 font-medium text-accent-ink disabled:opacity-40">
-              Save activity
+              Save
             </button>
+            {kind === "strength" && (
+              <button type="button" onClick={() => save(true)} disabled={busy}
+                className="min-h-12 flex-1 rounded-xl border border-accent px-4 text-sm text-accent disabled:opacity-40">
+                Save and add another exercise
+              </button>
+            )}
             <button type="button" onClick={() => { setOpen(false); setErr(null); }} className="min-h-12 rounded-xl border border-line px-4 text-sm">
-              Cancel
+              Close
             </button>
           </div>
         </div>

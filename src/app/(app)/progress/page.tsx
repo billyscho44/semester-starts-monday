@@ -3,6 +3,7 @@ import { addDays, dayIndex, shortLabel, todayIso } from "@/lib/dates";
 import { loadAllPlanDays, type PlanDay } from "@/lib/plan";
 import FactorEditor from "@/components/FactorEditor";
 import { activeFromLogs, loadActivityDays, MIN_ACTIVE_MIN } from "@/lib/activity";
+import { computeSlots, loadSlotInputs } from "@/lib/slots";
 import { BarChart, LineChart, Spark, StackedBars, type Bar, type Pt, type Stack } from "@/components/charts";
 
 export const dynamic = "force-dynamic";
@@ -72,6 +73,14 @@ export default async function ProgressPage() {
   const weekOf = (date: string) => Math.floor(dayIndex(start, date) / 7) + 1;
   const nWeeks = Math.min(4, Math.max(1, Math.floor(Math.max(idxToday, 0) / 7) + 1));
   const weekLabels = Array.from({ length: nWeeks }, (_, i) => `W${i + 1}`);
+
+  // Plan slots filled per week (any day, any source)
+  const slotInputs = await loadSlotInputs(supabase, start);
+  const slotFills = computeSlots(slotInputs).fills;
+  const slotsFilled: Bar[] = weekLabels.map((label, i) => ({
+    label,
+    value: slotInputs.slots.filter((x) => x.week_no === i + 1 && slotFills.has(x.id)).length,
+  }));
 
   // Active days and streak
   const activeDates = new Set(sessions.filter((s) => ACTIVE.has(s.status)).map((s) => s.date));
@@ -284,6 +293,9 @@ export default async function ProgressPage() {
 
       <Card title="Active days per week" sub={`A planned session (done, partly done or minimum), any logged activity with sets, or any walk, run or ride of ${MIN_ACTIVE_MIN} minutes or more counts as active. Goal: 7.`}>
         <BarChart data={activeDays} unit="days" title="Active days per week" />
+      </Card>
+      <Card title="Plan slots filled per week" sub="Out of 7: 3 cardio, 3 strength, 1 recovery. A slot fills when you do the work on any day, planned or not.">
+        <BarChart data={slotsFilled} unit="slots" title="Plan slots filled per week" />
       </Card>
       <Card title="Active minutes per week" sub="Minutes of the checked-off steps and sets, not the planned total.">
         <BarChart data={minutes} unit="min" title="Active minutes per week" />

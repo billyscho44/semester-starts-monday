@@ -4,6 +4,7 @@ import { ensurePlan } from "@/lib/seed-plan";
 import { loadAllPlanDays } from "@/lib/plan";
 import { addDays, shortLabel, todayIso } from "@/lib/dates";
 import { activeFromLogs, loadActivityDays } from "@/lib/activity";
+import { computeSlots, loadSlotInputs, weekSummary } from "@/lib/slots";
 
 export const dynamic = "force-dynamic";
 
@@ -23,6 +24,8 @@ export default async function SchedulePage() {
     supabase.from("session").select("date,status").gte("date", start).lte("date", addDays(start, 27)),
     loadActivityDays(supabase),
   ]);
+  const slotInputs = await loadSlotInputs(supabase, start);
+  const { fills } = computeSlots(slotInputs);
   const status = new Map((sessions.data ?? []).map((s) => [s.date as string, s.status as string]));
   const today = todayIso();
 
@@ -35,6 +38,9 @@ export default async function SchedulePage() {
       {weeks.map((list, w) => (
         <section key={w} className="mt-6">
           <h2 className="text-sm font-semibold text-muted">Week {w + 1}{w === 3 ? " · deload" : ""}</h2>
+          <p className="text-xs text-muted">
+            {weekSummary(slotInputs.slots, fills, w + 1).map((x) => `${x.kind[0].toUpperCase()}${x.kind.slice(1)} ${x.filled}/${x.total}`).join(" · ")}
+          </p>
           <ul className="mt-2 divide-y divide-line rounded-2xl border border-line bg-card">
             {list.map((d) => {
               const date = addDays(start, w * 7 + d.day_no - 1);
@@ -49,10 +55,14 @@ export default async function SchedulePage() {
                       </span>
                       <span className="block truncate text-sm">{d.title.replace(" (deload)", "")}</span>
                     </span>
-                    {st && st !== "planned" && !(st === "skipped" && activeFromLogs(date, logs.manual, logs.strava)) ? (
+                    {fills.get(d.id) && fills.get(d.id)!.date !== date ? (
+                      <span className="shrink-0 rounded-full border border-accent px-2 py-0.5 text-xs text-accent">
+                        {fills.get(d.id)!.level === "full" ? "Done" : "Partly"} {shortLabel(fills.get(d.id)!.date).split(",")[0]}
+                      </span>
+                    ) : st && st !== "planned" && !(st === "skipped" && activeFromLogs(date, logs.manual, logs.strava)) ? (
                       <span className="shrink-0 rounded-full border border-accent px-2 py-0.5 text-xs text-accent">{BADGE[st]}</span>
-                    ) : activeFromLogs(date, logs.manual, logs.strava) ? (
-                      <span className="shrink-0 rounded-full border border-accent px-2 py-0.5 text-xs text-accent">Swapped</span>
+                    ) : activeFromLogs(date, logs.manual, logs.strava) && !fills.get(d.id) ? (
+                      <span className="shrink-0 rounded-full border border-accent px-2 py-0.5 text-xs text-accent">Other activity</span>
                     ) : date < today ? (
                       <span className="shrink-0 text-xs text-muted">Open</span>
                     ) : null}

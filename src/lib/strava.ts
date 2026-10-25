@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { dayIndex } from "./dates";
+import { MIN_ACTIVE_MIN } from "./activity";
 
 const API = "https://www.strava.com/api/v3";
 
@@ -100,9 +101,14 @@ export async function processActivity(admin: SupabaseClient, link: Link, activit
   const idx = dayIndex(s.plan_start_date, localDate);
   let sessionId: string | null = null;
   if (idx >= 0 && idx < 28 && CARDIO.has(row.sport_type)) {
-    const { data: pd } = await admin.from("plan_day")
-      .select("id,session_kind,steps").eq("user_id", link.user_id)
-      .eq("week_no", Math.floor(idx / 7) + 1).eq("day_no", (idx % 7) + 1).maybeSingle();
+    // If Billy switched this day to a different plan session, match the ride to that session.
+    const { data: existing } = await admin.from("session").select("plan_day_id")
+      .eq("user_id", link.user_id).eq("date", localDate).maybeSingle();
+    const { data: pd } = existing?.plan_day_id
+      ? await admin.from("plan_day").select("id,session_kind,steps").eq("id", existing.plan_day_id).maybeSingle()
+      : await admin.from("plan_day")
+          .select("id,session_kind,steps").eq("user_id", link.user_id)
+          .eq("week_no", Math.floor(idx / 7) + 1).eq("day_no", (idx % 7) + 1).maybeSingle();
     if (pd && (pd.session_kind === "cardio" || pd.session_kind === "recovery")) {
       const { data: sess } = await admin.from("session")
         .upsert({ user_id: link.user_id, date: localDate, plan_day_id: pd.id }, { onConflict: "user_id,date" })
@@ -114,7 +120,7 @@ export async function processActivity(admin: SupabaseClient, link: Link, activit
           .filter((x) => x.type === "step" && !["Flexibility", "Core and balance"].includes(x.label ?? ""))
           .reduce((t, x) => t + (x.min ?? 0), 0);
         const mins = (row.moving_s ?? 0) / 60;
-        const next = mins >= 0.8 * planned ? "done" : mins >= 10 ? "minimum" : null;
+        const next = mins >= 0.8 * planned ? "done" : mins >= MIN_ACTIVE_MIN ? "minimum" : null;
         const rank: Record<string, number> = { planned: 0, skipped: 0, minimum: 1, partial: 2, done: 3 };
         if (next && rank[next] > (rank[sess.status] ?? 0)) {
           await admin.from("session").update({

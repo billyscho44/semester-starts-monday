@@ -12,6 +12,7 @@ export type LoggedActivity = {
   minutes: number | null;
   distance_mi: number | null;
   note: string | null;
+  effort: "easy" | "average" | "hard" | null;
   exercise: { id: string; name: string; unit: "reps" | "seconds" | "minutes"; bw_factor: number | null } | null;
   sets: ActivitySet[];
 };

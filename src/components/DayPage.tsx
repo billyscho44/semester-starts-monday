@@ -9,6 +9,11 @@ import Proposals, { type ProposalRow } from "./Proposals";
 import ActivityCard, { type Activity } from "./ActivityCard";
 import ActivityLogger, { type ExerciseOption } from "./ActivityLogger";
 import { ensureExtraExercises, type LoggedActivity } from "@/lib/activity";
+import { computeSlots, loadSlotInputs, weekSummary, type Fill, type Slot, type SlotKind } from "@/lib/slots";
+import WeekSlots, { type CreditInfo, type SlotRow } from "./WeekSlots";
+import SessionSwap, { type SwapOption } from "./SessionSwap";
+
+const editableDay = (date: string, today: string) => date <= today;
 
 export default async function DayPage({ date }: { date: string }) {
   const supabase = await createClient();
@@ -32,6 +37,10 @@ export default async function DayPage({ date }: { date: string }) {
   let activities: Activity[] = [];
   let entries: LoggedActivity[] = [];
   let exerciseOptions: ExerciseOption[] = [];
+  let slotCtx: { mine: Slot[]; fills: Map<string, Fill> } | null = null;
+  let swapLocked = false;
+  let swap: { currentId: string; defaultId: string; options: SwapOption[] } | null = null;
+  let weekView: { week: number; summary: ReturnType<typeof weekSummary>; rows: SlotRow[]; credits: CreditInfo[] } | null = null;
 
   try {
     await ensurePlan(supabase, user.id);
@@ -46,9 +55,45 @@ export default async function DayPage({ date }: { date: string }) {
         .from("plan_day").select(PLAN_SELECT).eq("week_no", pos.week).eq("day_no", pos.day).maybeSingle();
       day = (data as unknown as PlanDay) ?? null;
     }
+    if (pos) {
+      const inputs = await loadSlotInputs(supabase, start);
+      const { fills, byDate } = computeSlots(inputs);
+      const mine = inputs.slots.filter((x) => x.week_no === pos.week);
+      slotCtx = { mine, fills };
+      const ofDay = byDate.get(date) ?? [];
+      const titleOf = new Map(inputs.slots.map((x) => [x.id, x.title.replace(" (deload)", "")]));
+      const w = inputs.work.get(date);
+      const credits: CreditInfo[] = [];
+      for (const kind of ["strength", "cardio"] as const) {
+        const ov = inputs.overrides.find((o) => o.date === date && o.kind === kind);
+        const hasWork = kind === "strength" ? (w?.strengthSets ?? 0) > 0 : (w?.cardioMin ?? 0) > 0;
+        if (!hasWork && !ov) continue;
+        const f = ofDay.find((x) => x.source === "logged" && (kind === "strength" ? x.kind === "strength" : x.kind !== "strength"));
+        credits.push({
+          kind,
+          options: mine.filter((x) => x.kind === (kind as SlotKind)).map((x) => ({ id: x.id, title: titleOf.get(x.id) ?? x.title })),
+          override: ov ? ov.plan_day_id : undefined,
+          autoText: f ? (titleOf.get(f.slotId) ?? "a slot") : "not enough for a slot yet",
+        });
+      }
+      weekView = {
+        week: pos.week,
+        summary: weekSummary(inputs.slots, fills, pos.week),
+        rows: mine.map((x) => ({
+          id: x.id, kind: x.kind, title: x.title, date: "",
+          fill: fills.get(x.id) ? { date: fills.get(x.id)!.date, level: fills.get(x.id)!.level, source: fills.get(x.id)!.source, forced: fills.get(x.id)!.forced } : null,
+        })),
+        credits,
+      };
+    }
     const { data: s } = await supabase
       .from("session").select("id,date,plan_day_id,status,miss_reason,zwift_workout").eq("date", date).maybeSingle();
     session = (s as SessionRow) ?? null;
+    const defaultDay = day;
+    if (session?.plan_day_id && day && session.plan_day_id !== day.id) {
+      const { data: swapped } = await supabase.from("plan_day").select(PLAN_SELECT).eq("id", session.plan_day_id).maybeSingle();
+      if (swapped) day = swapped as unknown as PlanDay;
+    }
     if (session) {
       const [c, r, f] = await Promise.all([
         supabase.from("check_log").select("kind,ref,set_no,done,reps,load_lb").eq("session_id", session.id),
@@ -60,6 +105,18 @@ export default async function DayPage({ date }: { date: string }) {
       results = (r.data ?? []) as ResultRow[];
       feedback = (f.data as FeedbackRow) ?? null;
     }
+    if (slotCtx && defaultDay) {
+      const ctx = slotCtx as { mine: Slot[]; fills: Map<string, Fill> };
+      const currentId = day?.id ?? defaultDay.id;
+      swap = {
+        currentId,
+        defaultId: defaultDay.id,
+        options: ctx.mine
+          .filter((x) => !ctx.fills.has(x.id) || x.id === currentId || x.id === defaultDay.id)
+          .map((x) => ({ id: x.id, title: x.title.replace(" (deload)", "") })),
+      };
+    }
+    swapLocked = checks.some((c) => c.done) || (!!session && session.status !== "planned");
     const { data: acts } = await supabase
       .from("strava_activity")
       .select("id,name,sport_type,moving_s,distance_m,avg_hr,max_hr,avg_watts,device_watts,zone_seconds,perceived_exertion,suffer_score:raw->>suffer_score")
@@ -68,13 +125,13 @@ export default async function DayPage({ date }: { date: string }) {
     const [logR, exR] = await Promise.all([
       supabase
         .from("activity_log")
-        .select("id,date,kind,label,minutes,distance_mi,note,exercise:exercise_id(id,name,unit,bw_factor),activity_set(set_no,reps,load_lb)")
+        .select("id,date,kind,label,minutes,distance_mi,note,effort,exercise:exercise_id(id,name,unit,bw_factor),activity_set(set_no,reps,load_lb)")
         .eq("date", date).order("created_at"),
       supabase.from("exercise").select("id,name,unit,bw_factor").eq("type", "strength").order("name"),
     ]);
     entries = ((logR.data ?? []) as unknown as (Omit<LoggedActivity, "sets"> & { activity_set: { set_no: number; reps: number; load_lb: number | null }[] })[]).map((r) => ({
       id: r.id, date: r.date, kind: r.kind, label: r.label,
-      minutes: r.minutes, distance_mi: r.distance_mi != null ? Number(r.distance_mi) : null, note: r.note,
+      minutes: r.minutes, distance_mi: r.distance_mi != null ? Number(r.distance_mi) : null, note: r.note, effort: r.effort ?? null,
       exercise: r.exercise ? { ...r.exercise, bw_factor: r.exercise.bw_factor != null ? Number(r.exercise.bw_factor) : null } : null,
       sets: [...(r.activity_set ?? [])].sort((a, b) => a.set_no - b.set_no).map((x) => ({ set_no: x.set_no, reps: x.reps, load_lb: x.load_lb != null ? Number(x.load_lb) : null })),
     }));
@@ -129,6 +186,10 @@ export default async function DayPage({ date }: { date: string }) {
 
       {!error && !note && proposals.length > 0 && <Proposals rows={proposals} title="Next time" />}
 
+      {!error && !note && swap && swap.options.length > 1 && editableDay(date, today) && (
+        <SessionSwap userId={user.id} date={date} currentId={swap.currentId} defaultId={swap.defaultId} options={swap.options} locked={swapLocked} />
+      )}
+
       {!error && !note && (
         <DayView
           key={date}
@@ -146,6 +207,11 @@ export default async function DayPage({ date }: { date: string }) {
 
       {!error && !note && (
         <ActivityLogger userId={user.id} date={date} editable={date <= today} exercises={exerciseOptions} entries={entries} />
+      )}
+
+      {!error && !note && weekView && (
+        <WeekSlots userId={user.id} date={date} week={weekView.week} summary={weekView.summary} rows={weekView.rows}
+          credits={weekView.credits} editable={date <= today} />
       )}
 
       {isToday && !error && <WeightCard userId={user.id} date={date} initial={weight} last={lastWeight} />}
