@@ -21,7 +21,7 @@ export const KIND_LABEL: Record<ActivityKind, string> = {
 };
 
 /** A manual cardio entry or a Strava activity needs at least this many minutes to count as an active day. */
-export const MIN_ACTIVE_MIN = 10;
+export const MIN_ACTIVE_MIN = 15;
 
 /** Extra bodyweight moves that are not in the plan but are easy to log on a day away from home. */
 const EXTRA: [name: string, movement: string, unit: "reps" | "seconds", factor: number | null, basis: string | null][] = [

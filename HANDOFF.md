@@ -39,9 +39,11 @@ Next.js 16 (App Router, Turbopack, `src/proxy.ts` instead of middleware, `PagePr
 ## Off-plan activity logging (built Oct 25, on `dev`, awaiting Billy's test)
 - "Other activity" card on every day (Today and past days): Log an activity with type Walk, Run, Ride, Strength, Other. Cardio entries need minutes (distance optional). Strength entries are one exercise per entry with sets of reps (or seconds) and optional added weight; the bodyweight factor is snapshotted per set (`activity_set.bw_factor`).
 - Extra exercises auto-added per user by `ensureExtraExercises` (src/lib/activity.ts): Push-up 0.69, Knee push-up 0.54, Sit-up, Plank (seconds).
-- Counts as an active day (streak, active days per week): any entry with sets, any manual cardio of 10+ minutes, or any Strava activity of 10+ minutes. Active minutes add manual minutes and unmatched Strava minutes (matched rides are already counted through the plan's checked steps).
+- Counts as an active day (streak, active days per week): any entry with sets, any manual cardio of 15+ minutes, or any Strava activity of 15+ minutes (MIN_ACTIVE_MIN in src/lib/activity.ts). Active minutes add manual minutes and unmatched Strava minutes (matched rides are already counted through the plan's checked steps).
 - Manual strength sets feed strength sets, effective-volume and the Lifts table (merged by exercise name with plan sets). They do NOT feed the progression engine.
 - Plan day badge shows "Swapped" when the plan is planned or skipped but something else was logged (Today, Schedule). History lists activity-only days.
+- Progress has a "Totals by exercise" card (last 7 days and block total, plan and logged sets together; push-up variations summed with the split shown).
+- Billy records rides, walks and runs on his Watch and imports them into Strava afterward; the Strava app is used live only for the indoor bike. Imported activities carry their original date.
 - ActivityCard shows Strava's Relative Effort (`raw->>suffer_score`).
 - Not built: editing an entry (delete and re-add), manual walk/run duplicate detection against Strava (Billy logs by hand only what Strava lacks).
 

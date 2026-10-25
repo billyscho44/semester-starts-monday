@@ -207,6 +207,35 @@ export default async function ProgressPage() {
     };
   });
 
+  // Totals per exercise: plan sets and logged sets together. Push-up variations are summed into one line.
+  type Tot = { family: string; variant: string; unit: string; last7: number; block: number };
+  const totals = new Map<string, Tot>();
+  const addTotal = (name: string, unit: string, date: string, reps: number) => {
+    const family = /push-up/i.test(name) ? "Push-ups (all kinds)" : name;
+    const key = `${family}|${name}`;
+    const t = totals.get(key) ?? { family, variant: name, unit, last7: 0, block: 0 };
+    t.block += reps;
+    if (date > addDays(today, -7) && date <= today) t.last7 += reps;
+    totals.set(key, t);
+  };
+  for (const c of setRows) {
+    const info = itemInfo.get(c.ref);
+    const date = sessDate.get(c.session_id);
+    if (info && date && c.reps) addTotal(info.name, info.unit, date, c.reps);
+  }
+  for (const a of manualStrength) {
+    if (!a.exercise) continue;
+    for (const x of a.activity_set ?? []) addTotal(a.exercise.name, a.exercise.unit, a.date, x.reps);
+  }
+  const totalRows = [...totals.values()].reduce((m, t) => {
+    const cur = m.get(t.family) ?? { family: t.family, unit: t.unit, last7: 0, block: 0, parts: [] as Tot[] };
+    cur.last7 += t.last7; cur.block += t.block; cur.parts.push(t);
+    m.set(t.family, cur);
+    return m;
+  }, new Map<string, { family: string; unit: string; last7: number; block: number; parts: Tot[] }>());
+  const totalList = [...totalRows.values()].sort((a, b) => b.block - a.block);
+  const fmtTot = (v: number, unit: string) => (unit === "seconds" ? `${v} s` : `${v}`);
+
   // Cardio from Strava
   const z2Weekly: Bar[] = weekLabels.map((label, i) => ({ label, value: zoneMin(i + 1, (z) => z[1]) }));
   const z3Weekly: Bar[] = weekLabels.map((label, i) => ({ label, value: zoneMin(i + 1, (z) => z[2] + z[3] + z[4]) }));
@@ -278,6 +307,34 @@ export default async function ProgressPage() {
           <LineChart points={wPts} avg={wAvg} unit="lb" title="Weight" />
         ) : (
           <p className="text-sm text-muted">Enter your weight on Today. The chart draws after two entries.</p>
+        )}
+      </Card>
+
+      <Card title="Totals by exercise" sub="Reps (seconds for holds) from the plan and from Other activity together. Push-up variations are added into one line, with the split underneath.">
+        {totalList.length === 0 ? (
+          <p className="text-sm text-muted">Log sets to see totals.</p>
+        ) : (
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs text-muted">
+                <th className="py-1 font-medium">Exercise</th><th className="font-medium">Last 7 days</th><th className="font-medium">Block</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-line">
+              {totalList.map((r) => (
+                <tr key={r.family}>
+                  <td className="py-2 pr-2 leading-snug">
+                    {r.family.replace(/,.*$/, "")}
+                    {r.parts.length > 1 && (
+                      <span className="block text-xs text-muted">{r.parts.map((p) => `${p.variant.replace(/,.*$/, "")} ${fmtTot(p.block, p.unit)}`).join(" · ")}</span>
+                    )}
+                  </td>
+                  <td className="pr-2">{fmtTot(r.last7, r.unit)}</td>
+                  <td>{fmtTot(r.block, r.unit)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         )}
       </Card>
 
