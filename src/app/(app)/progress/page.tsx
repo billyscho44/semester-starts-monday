@@ -38,7 +38,7 @@ export default async function ProgressPage() {
   const today = todayIso();
   const idxToday = dayIndex(start, today);
 
-  const [days, sessR, chkR, resR, itemR, wR, exR] = await Promise.all([
+  const [days, sessR, chkR, resR, itemR, wR, exR, actR] = await Promise.all([
     loadAllPlanDays(supabase),
     supabase.from("session").select("id,date,plan_day_id,status"),
     supabase.from("check_log").select("session_id,kind,ref,set_no,done,reps,load_lb,bw_factor").eq("done", true),
@@ -46,6 +46,7 @@ export default async function ProgressPage() {
     supabase.from("plan_item").select("id,exercise:exercise_id(name,unit)"),
     supabase.from("weight_log").select("date,weight_lb").order("date"),
     supabase.from("exercise").select("id,name,bw_factor,bw_basis").order("name"),
+    supabase.from("strava_activity").select("id,name,local_date,moving_s,avg_hr,avg_watts,device_watts,zone_seconds,sport_type").order("local_date"),
   ]);
   const sessions = (sessR.data ?? []) as Sess[];
   const checks = (chkR.data ?? []) as Chk[];
@@ -55,6 +56,10 @@ export default async function ProgressPage() {
       i.id, { name: i.exercise?.name ?? "?", unit: i.exercise?.unit ?? "reps" },
     ]),
   );
+  type Act = { id: number; name: string | null; local_date: string; moving_s: number | null; avg_hr: number | null; avg_watts: number | null; device_watts: boolean | null; zone_seconds: number[] | null; sport_type: string | null };
+  const acts = (actR.data ?? []) as unknown as Act[];
+  const zoneMin = (week: number, pick: (z: number[]) => number): number =>
+    Math.round(acts.filter((a) => a.zone_seconds && weekOf(a.local_date) === week).reduce((t, a) => t + pick(a.zone_seconds!), 0) / 60);
   const exercises = (exR.data ?? []) as { id: string; name: string; bw_factor: number | null; bw_basis: string | null }[];
   const weights = ((wR.data ?? []) as { date: string; weight_lb: number }[]).map((w) => ({ date: w.date, lb: Number(w.weight_lb) }));
 
@@ -174,6 +179,19 @@ export default async function ProgressPage() {
     };
   });
 
+  // Cardio from Strava
+  const z2Weekly: Bar[] = weekLabels.map((label, i) => ({ label, value: zoneMin(i + 1, (z) => z[1]) }));
+  const z3Weekly: Bar[] = weekLabels.map((label, i) => ({ label, value: zoneMin(i + 1, (z) => z[2] + z[3] + z[4]) }));
+  const hrPts: Pt[] = acts.filter((a) => a.avg_hr).map((a) => ({ x: dayIndex(start, a.local_date), y: Math.round(Number(a.avg_hr)), label: shortLabel(a.local_date) }));
+  const wattPts: Pt[] = acts.filter((a) => a.avg_watts && a.device_watts).map((a) => ({ x: dayIndex(start, a.local_date), y: Math.round(Number(a.avg_watts)), label: shortLabel(a.local_date) }));
+  const sameWorkout = (() => {
+    const g = new Map<string, Act[]>();
+    for (const a of acts.filter((x) => x.avg_hr && x.name && /ride/i.test(x.sport_type ?? ""))) g.set(a.name!, [...(g.get(a.name!) ?? []), a]);
+    return [...g.entries()].filter(([, l]) => l.length > 1).map(([name, l]) => ({
+      name, n: l.length, first: Math.round(Number(l[0].avg_hr)), latest: Math.round(Number(l[l.length - 1].avg_hr)),
+    }));
+  })();
+
   // Weight
   const wPts: Pt[] = weights.map((w) => ({ x: dayIndex(start, w.date), y: w.lb, label: shortLabel(w.date) }));
   const wAvg: Pt[] = weights.map((w, i) => {
@@ -263,13 +281,40 @@ export default async function ProgressPage() {
         <FactorEditor rows={exercises} />
       </Card>
 
-      <Card title="Added after Strava is linked" sub="Step 5. These need the heart-rate and power data from your rides.">
-        <ul className="space-y-2 text-sm">
-          <li><span className="font-medium">Time in zone per week.</span> <span className="text-muted">Minutes in Z2, Z3 and Z4 or higher.</span></li>
-          <li><span className="font-medium">Average HR on the same Zwift workout.</span> <span className="text-muted">Lower HR at the same effort means fitness is rising.</span></li>
-          <li><span className="font-medium">Power and FTP.</span> <span className="text-muted">Average power by ride, and the Week 3 Ramp Test result.</span></li>
-          <li><span className="font-medium">Resting HR.</span> <span className="text-muted">Entered weekly; the trend is the main fitness signal.</span></li>
-        </ul>
+      <Card title="Time in Z2 (minutes per week)" sub="Easy aerobic work. Heart-rate zones come from your Strava rides.">
+        {acts.length ? <BarChart data={z2Weekly} unit="min" title="Minutes in Z2 per week" /> : <p className="text-sm text-muted">Connect Strava in Settings to fill this in.</p>}
+      </Card>
+      {acts.length > 0 && (
+        <>
+          <Card title="Time in Z3 or higher (minutes per week)" sub="Steady and hard work. Z4 and Z5 come from the interval days.">
+            <BarChart data={z3Weekly} unit="min" title="Minutes in Z3 or higher per week" />
+          </Card>
+          {hrPts.length >= 2 && (
+            <Card title="Average heart rate per ride" sub="Same effort at a lower heart rate means fitness is rising. Compare like with like.">
+              <LineChart points={hrPts} unit="bpm" title="Average heart rate per ride" />
+            </Card>
+          )}
+          {sameWorkout.length > 0 && (
+            <Card title="Same workout, first vs latest" sub="Average HR on rides with the same name.">
+              <table className="w-full text-sm">
+                <thead><tr className="text-left text-xs text-muted"><th className="py-1 font-medium">Ride</th><th className="font-medium">First</th><th className="font-medium">Latest</th></tr></thead>
+                <tbody className="divide-y divide-line">
+                  {sameWorkout.map((r) => (
+                    <tr key={r.name}><td className="py-2 pr-2 leading-snug">{r.name}</td><td className="pr-2 text-muted">{r.first}</td><td>{r.latest}{r.latest < r.first ? " ↓" : ""}</td></tr>
+                  ))}
+                </tbody>
+              </table>
+            </Card>
+          )}
+          {wattPts.length >= 2 && (
+            <Card title="Average power per ride" sub="Measured by the Kickr Core. FTP retest is in Week 3.">
+              <LineChart points={wattPts} unit="W" title="Average power per ride" />
+            </Card>
+          )}
+        </>
+      )}
+      <Card title="Still to come" sub="Resting heart rate trend (weekly entry) arrives with the weekly review in step 8.">
+        <p className="text-sm text-muted">Change max and resting HR in Settings. Zones update from the next ride.</p>
       </Card>
     </main>
   );

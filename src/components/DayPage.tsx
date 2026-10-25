@@ -6,6 +6,7 @@ import { addDays, longLabel, planPosition, todayIso } from "@/lib/dates";
 import DayView, { type CheckRow, type FeedbackRow, type ResultRow } from "./DayView";
 import WeightCard from "./WeightCard";
 import Proposals, { type ProposalRow } from "./Proposals";
+import ActivityCard, { type Activity } from "./ActivityCard";
 
 export default async function DayPage({ date }: { date: string }) {
   const supabase = await createClient();
@@ -26,6 +27,7 @@ export default async function DayPage({ date }: { date: string }) {
   let lastWeight: { date: string; lb: number } | null = null;
   let note: string | null = null;
   let proposals: ProposalRow[] = [];
+  let activities: Activity[] = [];
 
   try {
     await ensurePlan(supabase, user.id);
@@ -53,6 +55,11 @@ export default async function DayPage({ date }: { date: string }) {
       results = (r.data ?? []) as ResultRow[];
       feedback = (f.data as FeedbackRow) ?? null;
     }
+    const { data: acts } = await supabase
+      .from("strava_activity")
+      .select("id,name,sport_type,moving_s,distance_m,avg_hr,max_hr,avg_watts,device_watts,zone_seconds,perceived_exertion")
+      .eq("local_date", date).order("started_at");
+    activities = (acts ?? []) as unknown as Activity[];
     const PSEL = "id,kind,summary,reason,status,new_target_reps,new_target_load_lb,session_id";
     const [pend, mine] = await Promise.all([
       isToday
@@ -99,6 +106,8 @@ export default async function DayPage({ date }: { date: string }) {
         </section>
       )}
 
+      {!error && !note && activities.map((a) => <ActivityCard key={a.id} a={a} />)}
+
       {!error && !note && proposals.length > 0 && <Proposals rows={proposals} title="Next time" />}
 
       {!error && !note && (
@@ -118,7 +127,7 @@ export default async function DayPage({ date }: { date: string }) {
       {isToday && !error && <WeightCard userId={user.id} date={date} initial={weight} last={lastWeight} />}
 
       <footer className="mt-10 pb-4">
-        <p className="text-xs text-muted">Signed in as {user.email}</p>
+        <p className="text-xs text-muted">Signed in as {user.email} · <Link href="/settings" className="underline underline-offset-4">Settings</Link></p>
         <form action="/auth/signout" method="post" className="mt-1">
           <button type="submit" className="min-h-11 text-sm text-muted underline underline-offset-4">Sign out</button>
         </form>
