@@ -121,6 +121,7 @@ export default function DayView(props: {
         user_id: userId, session_id: sid, kind, ref, set_no: n, done: v.done,
         reps: v.reps === "" ? null : Number(v.reps),
         load_lb: v.load === "" ? null : Number(v.load),
+        bw_factor: kind === "set" ? day?.plan_item.find((i) => i.id === ref)?.exercise?.bw_factor ?? null : null,
       },
       { onConflict: "session_id,kind,ref,set_no" },
     );

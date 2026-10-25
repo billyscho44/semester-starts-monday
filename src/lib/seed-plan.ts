@@ -15,26 +15,26 @@ type Item = [
   load: string,
 ];
 
-const EX: Record<string, [string, string, string]> = {
-  "Chair squat": ["strength", "squat", "reps"],
-  "DB Romanian deadlift": ["strength", "hinge", "reps"],
-  "Reverse lunge, hand on chair": ["strength", "lunge", "reps"],
-  "Glute bridge": ["strength", "hinge", "reps"],
-  "Dead bug": ["strength", "core", "reps"],
-  "Side plank, knees down": ["strength", "core", "seconds"],
-  "Flat bench DB press": ["strength", "horizontal push", "reps"],
-  "One-arm DB row, hand on bench": ["strength", "horizontal pull", "reps"],
-  "Incline DB press, bench near 30°": ["strength", "horizontal push", "reps"],
-  "Band pull-apart": ["strength", "horizontal pull", "reps"],
-  "Seated DB shoulder press, bench near 72°": ["strength", "vertical push", "reps"],
-  "Incline plank on bench": ["strength", "core", "seconds"],
-  "Band Pallof press": ["strength", "core", "reps"],
-  "Incline push-up on bench": ["strength", "horizontal push", "reps"],
-  "Band row or pulldown": ["strength", "horizontal pull", "reps"],
-  "Balance board squat": ["balance", "squat", "reps"],
-  "Single-leg RDL, hand on chair": ["balance", "hinge", "reps"],
-  "Decline crunch, bench near -15°": ["strength", "core", "reps"],
-  "Farmer carry": ["strength", "carry", "seconds"],
+const EX: Record<string, [string, string, string, number | null]> = {
+  "Chair squat": ["strength", "squat", "reps", 0.88],
+  "DB Romanian deadlift": ["strength", "hinge", "reps", null],
+  "Reverse lunge, hand on chair": ["strength", "lunge", "reps", 0.6],
+  "Glute bridge": ["strength", "hinge", "reps", null],
+  "Dead bug": ["strength", "core", "reps", null],
+  "Side plank, knees down": ["strength", "core", "seconds", null],
+  "Flat bench DB press": ["strength", "horizontal push", "reps", null],
+  "One-arm DB row, hand on bench": ["strength", "horizontal pull", "reps", null],
+  "Incline DB press, bench near 30°": ["strength", "horizontal push", "reps", null],
+  "Band pull-apart": ["strength", "horizontal pull", "reps", null],
+  "Seated DB shoulder press, bench near 72°": ["strength", "vertical push", "reps", null],
+  "Incline plank on bench": ["strength", "core", "seconds", null],
+  "Band Pallof press": ["strength", "core", "reps", null],
+  "Incline push-up on bench": ["strength", "horizontal push", "reps", 0.4],
+  "Band row or pulldown": ["strength", "horizontal pull", "reps", null],
+  "Balance board squat": ["balance", "squat", "reps", 0.88],
+  "Single-leg RDL, hand on chair": ["balance", "hinge", "reps", null],
+  "Decline crunch, bench near -15°": ["strength", "core", "reps", null],
+  "Farmer carry": ["strength", "carry", "seconds", null],
 };
 
 const A: Record<number, Item[]> = {
@@ -167,8 +167,8 @@ export async function ensurePlan(supabase: SupabaseClient, userId: string): Prom
   if (count && count > 0) return;
 
   const { error: exErr } = await supabase.from("exercise").upsert(
-    Object.entries(EX).map(([name, [type, movement_pattern, unit]]) => ({
-      user_id: userId, name, type, movement_pattern, unit,
+    Object.entries(EX).map(([name, [type, movement_pattern, unit, bw_factor]]) => ({
+      user_id: userId, name, type, movement_pattern, unit, bw_factor, bw_basis: bw_factor == null ? null : "estimate",
     })),
     { onConflict: "user_id,name", ignoreDuplicates: true },
   );

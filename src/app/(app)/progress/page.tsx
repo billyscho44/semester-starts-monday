@@ -1,12 +1,13 @@
 import { createClient } from "@/lib/supabase/server";
 import { addDays, dayIndex, shortLabel, todayIso } from "@/lib/dates";
 import { loadAllPlanDays, type PlanDay } from "@/lib/plan";
+import FactorEditor from "@/components/FactorEditor";
 import { BarChart, LineChart, Spark, StackedBars, type Bar, type Pt, type Stack } from "@/components/charts";
 
 export const dynamic = "force-dynamic";
 
 type Sess = { id: string; date: string; plan_day_id: string | null; status: string };
-type Chk = { session_id: string; kind: string; ref: string; set_no: number; done: boolean; reps: number | null; load_lb: number | null };
+type Chk = { session_id: string; kind: string; ref: string; set_no: number; done: boolean; reps: number | null; load_lb: number | null; bw_factor: number | null };
 
 const ACTIVE = new Set(["done", "partial", "minimum"]);
 
@@ -37,20 +38,24 @@ export default async function ProgressPage() {
   const today = todayIso();
   const idxToday = dayIndex(start, today);
 
-  const [days, sessR, chkR, resR, itemR, wR] = await Promise.all([
+  const [days, sessR, chkR, resR, itemR, wR, exR] = await Promise.all([
     loadAllPlanDays(supabase),
     supabase.from("session").select("id,date,plan_day_id,status"),
-    supabase.from("check_log").select("session_id,kind,ref,set_no,done,reps,load_lb").eq("done", true),
+    supabase.from("check_log").select("session_id,kind,ref,set_no,done,reps,load_lb,bw_factor").eq("done", true),
     supabase.from("exercise_result").select("session_id,rating"),
-    supabase.from("plan_item").select("id,exercise:exercise_id(name)"),
+    supabase.from("plan_item").select("id,exercise:exercise_id(name,unit)"),
     supabase.from("weight_log").select("date,weight_lb").order("date"),
+    supabase.from("exercise").select("id,name,bw_factor,bw_basis").order("name"),
   ]);
   const sessions = (sessR.data ?? []) as Sess[];
   const checks = (chkR.data ?? []) as Chk[];
   const results = (resR.data ?? []) as { session_id: string; rating: "easy" | "average" | "hard" }[];
-  const itemName = new Map(
-    ((itemR.data ?? []) as unknown as { id: string; exercise: { name: string } | null }[]).map((i) => [i.id, i.exercise?.name ?? "?"]),
+  const itemInfo = new Map(
+    ((itemR.data ?? []) as unknown as { id: string; exercise: { name: string; unit: string } | null }[]).map((i) => [
+      i.id, { name: i.exercise?.name ?? "?", unit: i.exercise?.unit ?? "reps" },
+    ]),
   );
+  const exercises = (exR.data ?? []) as { id: string; name: string; bw_factor: number | null; bw_basis: string | null }[];
   const weights = ((wR.data ?? []) as { date: string; weight_lb: number }[]).map((w) => ({ date: w.date, lb: Number(w.weight_lb) }));
 
   const planDay = new Map<string, PlanDay>(days.map((d) => [d.id, d]));
@@ -97,13 +102,32 @@ export default async function ProgressPage() {
     value: sessions.filter((s) => ACTIVE.has(s.status) && weekOf(s.date) === i + 1).reduce((t, s) => t + minutesFor(s), 0),
   }));
 
-  // Strength sets
+  // Strength: effective load = body weight x exercise factor + weight added
+  const weightOn = (date: string): number | null => {
+    if (!weights.length) return null;
+    const before = weights.filter((w) => w.date <= date);
+    return (before.length ? before[before.length - 1] : weights[0]).lb;
+  };
   const sessDate = new Map(sessions.map((s) => [s.id, s.date]));
   const setRows = checks.filter((c) => c.kind === "set");
+  const effOf = (c: Chk, date: string) => {
+    const w = weightOn(date);
+    return (c.bw_factor && w ? Number(c.bw_factor) * w : 0) + Number(c.load_lb ?? 0);
+  };
+  const needsWeight = weights.length === 0 && setRows.some((c) => c.bw_factor);
   const setsWeekly: Bar[] = weekLabels.map((label, i) => ({
     label,
     value: setRows.filter((c) => weekOf(sessDate.get(c.session_id) ?? start) === i + 1).length,
   }));
+  const volumeWeekly: Bar[] = weekLabels.map((label, i) => ({
+    label,
+    value: Math.round(
+      setRows
+        .filter((c) => weekOf(sessDate.get(c.session_id) ?? start) === i + 1 && c.reps && itemInfo.get(c.ref)?.unit !== "seconds")
+        .reduce((t, c) => t + (c.reps as number) * effOf(c, sessDate.get(c.session_id) ?? start), 0),
+    ),
+  }));
+
   // Effort mix
   const effort: Stack[] = weekLabels.map((label, i) => {
     const rs = results.filter((r) => weekOf(sessDate.get(r.session_id) ?? start) === i + 1);
@@ -115,25 +139,27 @@ export default async function ProgressPage() {
     };
   });
 
-  // Per-exercise first vs latest best set
-  type Top = { date: string; load: number; reps: number };
+  // Per-exercise best set per session, compared on effective load
+  type Top = { date: string; eff: number; reps: number; factor: boolean; hold: boolean };
   const best = new Map<string, Map<string, Top>>();
+  const better = (a: Top, b: Top) =>
+    a.eff > b.eff * 1.02 || (Math.abs(a.eff - b.eff) <= b.eff * 0.02 && a.reps > b.reps);
   for (const c of setRows) {
-    const name = itemName.get(c.ref);
+    const info = itemInfo.get(c.ref);
     const date = sessDate.get(c.session_id);
-    if (!name || !date || c.reps == null) continue;
-    const t: Top = { date, load: Number(c.load_lb ?? 0), reps: c.reps };
-    const per = best.get(name) ?? new Map<string, Top>();
+    if (!info || !date || c.reps == null) continue;
+    const t: Top = { date, eff: effOf(c, date), reps: c.reps, factor: !!c.bw_factor, hold: info.unit === "seconds" };
+    const per = best.get(info.name) ?? new Map<string, Top>();
     const cur = per.get(date);
-    if (!cur || t.load > cur.load || (t.load === cur.load && t.reps > cur.reps)) per.set(date, t);
-    best.set(name, per);
+    if (!cur || better(t, cur)) per.set(date, t);
+    best.set(info.name, per);
   }
-  const fmtTop = (t: Top, unit: string) => (t.load ? `${t.load} lb × ${t.reps}` : `${t.reps}${unit}`);
-  const better = (a: Top, b: Top) => a.load > b.load || (a.load === b.load && a.reps > b.reps);
+  const fmtTop = (t: Top) =>
+    t.hold ? `${t.reps} s` : t.eff > 0 ? `${t.factor ? "≈" : ""}${Math.round(t.eff)} lb × ${t.reps}` : `${t.reps} reps`;
+  const score = (t: Top) => (t.hold || t.eff === 0 ? t.reps : Math.round(t.eff * (1 + t.reps / 30) * 10) / 10);
   const improvements: Bar[] = weekLabels.map((label) => ({ label, value: 0 }));
   const exerciseRows = [...best.entries()].map(([name, per]) => {
     const list = [...per.values()].sort((a, b) => a.date.localeCompare(b.date));
-    const unit = /plank|carry/i.test(name) ? " s" : " reps";
     let run = list[0];
     for (const t of list.slice(1)) {
       if (better(t, run)) {
@@ -142,9 +168,8 @@ export default async function ProgressPage() {
         if (improvements[w]) improvements[w].value += 1;
       }
     }
-    const score = (t: Top) => (t.load ? Math.round(t.load * (1 + t.reps / 30) * 10) / 10 : t.reps);
     return {
-      name, n: list.length, first: fmtTop(list[0], unit), latest: fmtTop(list[list.length - 1], unit),
+      name, n: list.length, first: fmtTop(list[0]), latest: fmtTop(list[list.length - 1]),
       up: better(list[list.length - 1], list[0]), trend: list.map(score),
     };
   });
@@ -191,8 +216,12 @@ export default async function ProgressPage() {
       <Card title="Strength sets completed" sub="Every set you checked off, per week, loaded or bodyweight.">
         <BarChart data={setsWeekly} unit="sets" title="Strength sets completed per week" />
       </Card>
-      <Card title="Strength improvements" sub="Exercises where your best set beat every earlier session: more weight, more reps at the same weight, or a longer hold. Adding load to a bodyweight move counts.">
+      <Card title="Strength improvements" sub="Exercises where your best set beat every earlier session on effective load, reps or hold time. A harder variation counts when you change that exercise's factor or switch to it. Changes under 2% are ignored.">
         <BarChart data={improvements} unit="improvements" title="Strength improvements per week" />
+      </Card>
+      <Card title="Strength volume (effective lb)" sub="Reps × effective load for rep-based sets. Effective load = body weight × the exercise's factor + weight added. Holds are excluded.">
+        <BarChart data={volumeWeekly} unit="lb" title="Strength volume per week, effective load" />
+        {needsWeight && <p className="mt-2 text-xs text-danger">Enter your weight on Today. Bodyweight moves count as zero until you do.</p>}
       </Card>
       <Card title="Effort mix" sub="How you rated each exercise. As easy ratings pile up, the app proposes more (step 4).">
         <StackedBars data={effort} title="Exercise effort ratings per week" />
@@ -206,7 +235,7 @@ export default async function ProgressPage() {
         )}
       </Card>
 
-      <Card title="Lifts: first vs latest best set" sub="Heaviest set per session (reps if no weight, seconds for holds). The line shows each session's best set.">
+      <Card title="Lifts: first vs latest best set" sub="Best set per session on effective load (≈ means body weight is included). Reps if no load, seconds for holds.">
         {exerciseRows.length === 0 ? (
           <p className="text-sm text-muted">Log sets to see lift progress.</p>
         ) : (
@@ -228,6 +257,10 @@ export default async function ProgressPage() {
             </tbody>
           </table>
         )}
+      </Card>
+
+      <Card title="Bodyweight factors" sub="Fraction of your body weight each move carries (0.70 is a standard push-up; blank = only added weight counts). Study values: standard push-up 0.69 to 0.75, knee push-up 0.54 to 0.62. Everything else is an estimate. A change applies to sets logged from now on, so lower the incline push-up factor to its next bench setting when you steepen or flatten the bench.">
+        <FactorEditor rows={exercises} />
       </Card>
 
       <Card title="Added after Strava is linked" sub="Step 5. These need the heart-rate and power data from your rides.">
