@@ -8,6 +8,7 @@ const TABS = [
   { href: "/schedule", label: "Schedule" },
   { href: "/progress", label: "Progress" },
   { href: "/history", label: "History" },
+  { href: "/settings", label: "Settings" },
 ];
 
 export default function Nav() {
